@@ -19,26 +19,42 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient();
 
 function RootNavigator() {
-  const { profile } = useApp();
+  const { authUser, isAuthLoaded, profile } = useApp();
   const segments = useSegments();
 
   useEffect(() => {
-    const inTabsGroup = segments[0] === "(tabs)";
-    const isWelcome = segments[0] === "welcome";
+    if (!isAuthLoaded) return;
 
+    const current = segments[0] as string | undefined;
+
+    if (!authUser) {
+      // Not logged in → go to auth unless already there
+      if (current !== "auth") {
+        router.replace("/auth");
+      }
+      return;
+    }
+
+    // Logged in but hasn't completed onboarding
     const needsOnboarding = !profile || !profile.hasSeenWelcome;
+    if (needsOnboarding) {
+      if (current !== "welcome") {
+        router.replace("/welcome");
+      }
+      return;
+    }
 
-    if (needsOnboarding && !isWelcome) {
-      router.replace("/welcome");
-    } else if (!needsOnboarding && isWelcome) {
+    // Fully set up — go to main tabs
+    if (current === "auth" || current === "welcome") {
       router.replace("/(tabs)");
     }
-  }, [profile, segments]);
+  }, [authUser, isAuthLoaded, profile, segments]);
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" />
+    <Stack screenOptions={{ headerShown: false, animation: "fade" }}>
+      <Stack.Screen name="auth" options={{ animation: "none" }} />
       <Stack.Screen name="welcome" />
+      <Stack.Screen name="(tabs)" />
       <Stack.Screen
         name="modals/add-product"
         options={{ presentation: "modal" }}

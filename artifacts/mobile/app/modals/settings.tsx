@@ -1,10 +1,9 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React from "react";
 import {
   Alert,
   Image,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,7 +19,25 @@ const CURRENCIES: Currency[] = ["GHS", "USD", "EUR", "GBP"];
 
 export default function SettingsModal() {
   const insets = useSafeAreaInsets();
-  const { currency, setCurrency, clearAllData, products, sales } = useApp();
+  const { currency, setCurrency, clearAllData, products, sales, authUser, logOut } = useApp();
+
+  const handleLogOut = () => {
+    Alert.alert(
+      "Log Out",
+      "Are you sure you want to log out?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Log Out",
+          style: "destructive",
+          onPress: async () => {
+            router.back();
+            await logOut();
+          },
+        },
+      ]
+    );
+  };
 
   const handleClearData = () => {
     Alert.alert(
@@ -64,6 +81,24 @@ export default function SettingsModal() {
           <Text style={styles.brandName}>Inventoria</Text>
           <Text style={styles.brandVersion}>Version 1.0.0</Text>
         </View>
+
+        {authUser && (
+          <View style={styles.accountCard}>
+            <View style={styles.accountAvatar}>
+              <Text style={styles.accountAvatarText}>
+                {authUser.name.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.accountName}>{authUser.name}</Text>
+              <Text style={styles.accountEmail}>{authUser.email}</Text>
+            </View>
+            <Pressable style={styles.logoutBtn} onPress={handleLogOut}>
+              <Feather name="log-out" size={16} color={Colors.red} />
+              <Text style={styles.logoutText}>Log Out</Text>
+            </Pressable>
+          </View>
+        )}
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Currency</Text>
@@ -189,6 +224,57 @@ const styles = StyleSheet.create({
     color: Colors.gray[400],
     fontFamily: "Inter_400Regular",
     marginTop: 2,
+  },
+  accountCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: Colors.primaryLight,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Colors.primary + "30",
+  },
+  accountAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  accountAvatarText: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: Colors.white,
+  },
+  accountName: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: Colors.text.primary,
+  },
+  accountEmail: {
+    fontSize: 12,
+    color: Colors.gray[500],
+    fontFamily: "Inter_400Regular",
+    marginTop: 1,
+  },
+  logoutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: Colors.white,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+  },
+  logoutText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.red,
   },
   section: {
     backgroundColor: Colors.gray[50],

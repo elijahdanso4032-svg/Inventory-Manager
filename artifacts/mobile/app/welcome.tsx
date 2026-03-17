@@ -26,8 +26,8 @@ const features = [
 
 export default function WelcomeScreen() {
   const insets = useSafeAreaInsets();
-  const { setProfile } = useApp();
-  const [name, setName] = useState("");
+  const { setProfile, authUser } = useApp();
+  const [name, setName] = useState(authUser?.name ?? "");
   const [businessName, setBusinessName] = useState("");
   const [errors, setErrors] = useState({ name: false, business: false });
 

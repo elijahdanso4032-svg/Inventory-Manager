@@ -62,9 +62,26 @@ export interface UserProfile {
   hasSeenWelcome: boolean;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: number;
+}
+
 interface AppContextValue {
+  // Auth
+  authUser: AuthUser | null;
+  isAuthLoaded: boolean;
+  signUp: (email: string, name: string, password: string) => Promise<void>;
+  logIn: (email: string, password: string) => Promise<void>;
+  logOut: () => Promise<void>;
+
+  // Profile
   profile: UserProfile | null;
   setProfile: (profile: UserProfile) => void;
+
+  // Inventory
   products: Product[];
   sales: Sale[];
   currency: Currency;
@@ -140,47 +157,149 @@ const ACHIEVEMENTS: Achievement[] = [
 const AppContext = createContext<AppContextValue | null>(null);
 
 const STORAGE_KEYS = {
-  profile: "inventoria_profile",
-  products: "inventoria_products",
-  sales: "inventoria_sales",
-  currency: "inventoria_currency",
-  achievements: "inventoria_achievements",
+  users: "inventoria_users",
+  session: "inventoria_session",
+  profile: (userId: string) => `inventoria_profile_${userId}`,
+  products: (userId: string) => `inventoria_products_${userId}`,
+  sales: (userId: string) => `inventoria_sales_${userId}`,
+  currency: (userId: string) => `inventoria_currency_${userId}`,
+  achievements: (userId: string) => `inventoria_achievements_${userId}`,
 };
 
 function genId(): string {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9);
 }
 
+// Simple deterministic hash for local password storage
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(36) + str.length.toString(36);
+}
+
+interface StoredUser {
+  id: string;
+  email: string;
+  name: string;
+  passwordHash: string;
+  createdAt: number;
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [isAuthLoaded, setIsAuthLoaded] = useState(false);
+
   const [profile, setProfileState] = useState<UserProfile | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [currency, setCurrencyState] = useState<Currency>("GHS");
   const [unlockedIds, setUnlockedIds] = useState<Record<string, number>>({});
   const [newlyUnlocked, setNewlyUnlocked] = useState<Achievement | null>(null);
-  const [loaded, setLoaded] = useState(false);
 
+  // Load user data when authUser changes
+  const loadUserData = useCallback(async (userId: string) => {
+    try {
+      const [p, pr, s, c, a] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEYS.profile(userId)),
+        AsyncStorage.getItem(STORAGE_KEYS.products(userId)),
+        AsyncStorage.getItem(STORAGE_KEYS.sales(userId)),
+        AsyncStorage.getItem(STORAGE_KEYS.currency(userId)),
+        AsyncStorage.getItem(STORAGE_KEYS.achievements(userId)),
+      ]);
+      setProfileState(p ? JSON.parse(p) : null);
+      setProducts(pr ? JSON.parse(pr) : []);
+      setSales(s ? JSON.parse(s) : []);
+      setCurrencyState((c as Currency) ?? "GHS");
+      setUnlockedIds(a ? JSON.parse(a) : {});
+    } catch (e) {
+      console.log("Load user data error", e);
+    }
+  }, []);
+
+  // Initial load — check for saved session
   useEffect(() => {
     (async () => {
       try {
-        const [p, pr, s, c, a] = await Promise.all([
-          AsyncStorage.getItem(STORAGE_KEYS.profile),
-          AsyncStorage.getItem(STORAGE_KEYS.products),
-          AsyncStorage.getItem(STORAGE_KEYS.sales),
-          AsyncStorage.getItem(STORAGE_KEYS.currency),
-          AsyncStorage.getItem(STORAGE_KEYS.achievements),
-        ]);
-        if (p) setProfileState(JSON.parse(p));
-        if (pr) setProducts(JSON.parse(pr));
-        if (s) setSales(JSON.parse(s));
-        if (c) setCurrencyState(c as Currency);
-        if (a) setUnlockedIds(JSON.parse(a));
+        const sessionId = await AsyncStorage.getItem(STORAGE_KEYS.session);
+        if (sessionId) {
+          const usersRaw = await AsyncStorage.getItem(STORAGE_KEYS.users);
+          const users: StoredUser[] = usersRaw ? JSON.parse(usersRaw) : [];
+          const found = users.find((u) => u.id === sessionId);
+          if (found) {
+            const user: AuthUser = { id: found.id, email: found.email, name: found.name, createdAt: found.createdAt };
+            setAuthUser(user);
+            await loadUserData(found.id);
+          }
+        }
       } catch (e) {
-        console.log("Load error", e);
+        console.log("Session load error", e);
       } finally {
-        setLoaded(true);
+        setIsAuthLoaded(true);
       }
     })();
+  }, [loadUserData]);
+
+  const signUp = useCallback(async (email: string, name: string, password: string) => {
+    const usersRaw = await AsyncStorage.getItem(STORAGE_KEYS.users);
+    const users: StoredUser[] = usersRaw ? JSON.parse(usersRaw) : [];
+
+    const emailLower = email.toLowerCase().trim();
+    if (users.find((u) => u.email === emailLower)) {
+      throw new Error("An account with this email already exists");
+    }
+
+    const newUser: StoredUser = {
+      id: genId(),
+      email: emailLower,
+      name: name.trim(),
+      passwordHash: simpleHash(password),
+      createdAt: Date.now(),
+    };
+    users.push(newUser);
+    await AsyncStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users));
+    await AsyncStorage.setItem(STORAGE_KEYS.session, newUser.id);
+
+    const authUserObj: AuthUser = { id: newUser.id, email: newUser.email, name: newUser.name, createdAt: newUser.createdAt };
+    setAuthUser(authUserObj);
+    setProfileState(null);
+    setProducts([]);
+    setSales([]);
+    setCurrencyState("GHS");
+    setUnlockedIds({});
+  }, []);
+
+  const logIn = useCallback(async (email: string, password: string) => {
+    const usersRaw = await AsyncStorage.getItem(STORAGE_KEYS.users);
+    const users: StoredUser[] = usersRaw ? JSON.parse(usersRaw) : [];
+
+    const emailLower = email.toLowerCase().trim();
+    const found = users.find((u) => u.email === emailLower);
+    if (!found) {
+      throw new Error("No account found with this email");
+    }
+    if (found.passwordHash !== simpleHash(password)) {
+      throw new Error("Incorrect password");
+    }
+
+    await AsyncStorage.setItem(STORAGE_KEYS.session, found.id);
+    const authUserObj: AuthUser = { id: found.id, email: found.email, name: found.name, createdAt: found.createdAt };
+    setAuthUser(authUserObj);
+    await loadUserData(found.id);
+  }, [loadUserData]);
+
+  const logOut = useCallback(async () => {
+    await AsyncStorage.removeItem(STORAGE_KEYS.session);
+    setAuthUser(null);
+    setProfileState(null);
+    setProducts([]);
+    setSales([]);
+    setCurrencyState("GHS");
+    setUnlockedIds({});
+    setNewlyUnlocked(null);
   }, []);
 
   const checkAchievements = useCallback(
@@ -190,57 +309,71 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const now = Date.now();
           const newIds = { ...unlockedIds, [ach.id]: now };
           setUnlockedIds(newIds);
-          AsyncStorage.setItem(STORAGE_KEYS.achievements, JSON.stringify(newIds));
+          if (authUser) {
+            AsyncStorage.setItem(STORAGE_KEYS.achievements(authUser.id), JSON.stringify(newIds));
+          }
           setNewlyUnlocked({ ...ach, unlockedAt: now });
           break;
         }
       }
     },
-    [unlockedIds]
+    [unlockedIds, authUser]
   );
 
   const setProfile = useCallback((p: UserProfile) => {
     setProfileState(p);
-    AsyncStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(p));
-  }, []);
+    if (authUser) {
+      AsyncStorage.setItem(STORAGE_KEYS.profile(authUser.id), JSON.stringify(p));
+    }
+  }, [authUser]);
 
   const setCurrency = useCallback((c: Currency) => {
     setCurrencyState(c);
-    AsyncStorage.setItem(STORAGE_KEYS.currency, c);
-  }, []);
+    if (authUser) {
+      AsyncStorage.setItem(STORAGE_KEYS.currency(authUser.id), c);
+    }
+  }, [authUser]);
 
   const addProduct = useCallback(
     (data: Omit<Product, "id" | "createdAt">) => {
       const newProduct: Product = { ...data, id: genId(), createdAt: Date.now() };
       const updated = [...products, newProduct];
       setProducts(updated);
-      AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(updated));
+      if (authUser) {
+        AsyncStorage.setItem(STORAGE_KEYS.products(authUser.id), JSON.stringify(updated));
+      }
       checkAchievements(updated, sales);
     },
-    [products, sales, checkAchievements]
+    [products, sales, checkAchievements, authUser]
   );
 
   const updateProduct = useCallback(
     (id: string, updates: Partial<Product>) => {
       const updated = products.map((p) => (p.id === id ? { ...p, ...updates } : p));
       setProducts(updated);
-      AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(updated));
+      if (authUser) {
+        AsyncStorage.setItem(STORAGE_KEYS.products(authUser.id), JSON.stringify(updated));
+      }
     },
-    [products]
+    [products, authUser]
   );
 
   const deleteProduct = useCallback(
-    (id: string, deleteSales = false) => {
+    (id: string, deleteSalesHistory = false) => {
       const updatedProducts = products.filter((p) => p.id !== id);
       setProducts(updatedProducts);
-      AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(updatedProducts));
-      if (deleteSales) {
+      if (authUser) {
+        AsyncStorage.setItem(STORAGE_KEYS.products(authUser.id), JSON.stringify(updatedProducts));
+      }
+      if (deleteSalesHistory) {
         const updatedSales = sales.filter((s) => s.productId !== id);
         setSales(updatedSales);
-        AsyncStorage.setItem(STORAGE_KEYS.sales, JSON.stringify(updatedSales));
+        if (authUser) {
+          AsyncStorage.setItem(STORAGE_KEYS.sales(authUser.id), JSON.stringify(updatedSales));
+        }
       }
     },
-    [products, sales]
+    [products, sales, authUser]
   );
 
   const quickAddStock = useCallback(
@@ -249,9 +382,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         p.id === id ? { ...p, stock: p.stock + qty } : p
       );
       setProducts(updated);
-      AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(updated));
+      if (authUser) {
+        AsyncStorage.setItem(STORAGE_KEYS.products(authUser.id), JSON.stringify(updated));
+      }
     },
-    [products]
+    [products, authUser]
   );
 
   const addSale = useCallback(
@@ -259,37 +394,42 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const newSale: Sale = { ...data, id: genId(), soldAt: Date.now() };
       const updatedSales = [newSale, ...sales];
       setSales(updatedSales);
-      AsyncStorage.setItem(STORAGE_KEYS.sales, JSON.stringify(updatedSales));
-      // Reduce stock
       const updatedProducts = products.map((p) =>
         p.id === data.productId ? { ...p, stock: Math.max(0, p.stock - data.quantity) } : p
       );
       setProducts(updatedProducts);
-      AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(updatedProducts));
+      if (authUser) {
+        AsyncStorage.setItem(STORAGE_KEYS.sales(authUser.id), JSON.stringify(updatedSales));
+        AsyncStorage.setItem(STORAGE_KEYS.products(authUser.id), JSON.stringify(updatedProducts));
+      }
       checkAchievements(updatedProducts, updatedSales);
     },
-    [sales, products, checkAchievements]
+    [sales, products, checkAchievements, authUser]
   );
 
   const deleteSale = useCallback(
     (id: string) => {
       const updated = sales.filter((s) => s.id !== id);
       setSales(updated);
-      AsyncStorage.setItem(STORAGE_KEYS.sales, JSON.stringify(updated));
+      if (authUser) {
+        AsyncStorage.setItem(STORAGE_KEYS.sales(authUser.id), JSON.stringify(updated));
+      }
     },
-    [sales]
+    [sales, authUser]
   );
 
   const clearAllData = useCallback(async () => {
     setProducts([]);
     setSales([]);
     setUnlockedIds({});
-    await Promise.all([
-      AsyncStorage.removeItem(STORAGE_KEYS.products),
-      AsyncStorage.removeItem(STORAGE_KEYS.sales),
-      AsyncStorage.removeItem(STORAGE_KEYS.achievements),
-    ]);
-  }, []);
+    if (authUser) {
+      await Promise.all([
+        AsyncStorage.removeItem(STORAGE_KEYS.products(authUser.id)),
+        AsyncStorage.removeItem(STORAGE_KEYS.sales(authUser.id)),
+        AsyncStorage.removeItem(STORAGE_KEYS.achievements(authUser.id)),
+      ]);
+    }
+  }, [authUser]);
 
   const formatCurrency = useCallback(
     (amount: number) => {
@@ -302,49 +442,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const getTodayRevenue = useCallback(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    return sales
-      .filter((s) => s.soldAt >= start.getTime())
-      .reduce((sum, s) => sum + s.revenue, 0);
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    return sales.filter((s) => s.soldAt >= start.getTime()).reduce((sum, s) => sum + s.revenue, 0);
   }, [sales]);
 
   const getTodayProfit = useCallback(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    return sales
-      .filter((s) => s.soldAt >= start.getTime())
-      .reduce((sum, s) => sum + s.profit, 0);
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    return sales.filter((s) => s.soldAt >= start.getTime()).reduce((sum, s) => sum + s.profit, 0);
   }, [sales]);
 
-  const getTotalRevenue = useCallback(
-    () => sales.reduce((sum, s) => sum + s.revenue, 0),
-    [sales]
-  );
-
-  const getTotalProfit = useCallback(
-    () => sales.reduce((sum, s) => sum + s.profit, 0),
-    [sales]
-  );
-
-  const getStockValue = useCallback(
-    () => products.reduce((sum, p) => sum + p.costPrice * p.stock, 0),
-    [products]
-  );
+  const getTotalRevenue = useCallback(() => sales.reduce((sum, s) => sum + s.revenue, 0), [sales]);
+  const getTotalProfit = useCallback(() => sales.reduce((sum, s) => sum + s.profit, 0), [sales]);
+  const getStockValue = useCallback(() => products.reduce((sum, p) => sum + p.costPrice * p.stock, 0), [products]);
 
   const getLast14Days = useCallback(() => {
     const days: { date: string; revenue: number; profit: number }[] = [];
     for (let i = 13; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      d.setHours(0, 0, 0, 0);
-      const end = new Date(d);
-      end.setHours(23, 59, 59, 999);
-      const daySales = sales.filter((s) => s.soldAt >= d.getTime() && s.soldAt <= end.getTime());
+      const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
+      const end = new Date(d); end.setHours(23, 59, 59, 999);
+      const ds = sales.filter((s) => s.soldAt >= d.getTime() && s.soldAt <= end.getTime());
       days.push({
         date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-        revenue: daySales.reduce((sum, s) => sum + s.revenue, 0),
-        profit: daySales.reduce((sum, s) => sum + s.profit, 0),
+        revenue: ds.reduce((sum, s) => sum + s.revenue, 0),
+        profit: ds.reduce((sum, s) => sum + s.profit, 0),
       });
     }
     return days;
@@ -355,9 +475,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     for (const sale of sales) {
       const product = products.find((p) => p.id === sale.productId);
       if (!product) continue;
-      if (!map[sale.productId]) {
-        map[sale.productId] = { product, revenue: 0, profit: 0, soldQty: 0 };
-      }
+      if (!map[sale.productId]) map[sale.productId] = { product, revenue: 0, profit: 0, soldQty: 0 };
       map[sale.productId].revenue += sale.revenue;
       map[sale.productId].profit += sale.profit;
       map[sale.productId].soldQty += sale.quantity;
@@ -373,43 +491,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const clearNewlyUnlocked = useCallback(() => setNewlyUnlocked(null), []);
 
   const achievements = useMemo(
-    () =>
-      ACHIEVEMENTS.map((a) => ({
-        ...a,
-        unlockedAt: unlockedIds[a.id],
-      })),
+    () => ACHIEVEMENTS.map((a) => ({ ...a, unlockedAt: unlockedIds[a.id] })),
     [unlockedIds]
   );
 
   const value = useMemo<AppContextValue>(
     () => ({
-      profile,
-      setProfile,
-      products,
-      sales,
-      currency,
-      setCurrency,
-      achievements,
-      newlyUnlocked,
-      clearNewlyUnlocked,
-      addProduct,
-      updateProduct,
-      deleteProduct,
-      quickAddStock,
-      addSale,
-      deleteSale,
-      clearAllData,
-      formatCurrency,
-      getTodayRevenue,
-      getTodayProfit,
-      getTotalRevenue,
-      getTotalProfit,
-      getStockValue,
-      getLast14Days,
-      getTopProducts,
-      getLowStockProducts,
+      authUser, isAuthLoaded, signUp, logIn, logOut,
+      profile, setProfile,
+      products, sales, currency, setCurrency,
+      achievements, newlyUnlocked, clearNewlyUnlocked,
+      addProduct, updateProduct, deleteProduct, quickAddStock,
+      addSale, deleteSale, clearAllData, formatCurrency,
+      getTodayRevenue, getTodayProfit, getTotalRevenue, getTotalProfit,
+      getStockValue, getLast14Days, getTopProducts, getLowStockProducts,
     }),
     [
+      authUser, isAuthLoaded, signUp, logIn, logOut,
       profile, setProfile, products, sales, currency, setCurrency,
       achievements, newlyUnlocked, clearNewlyUnlocked,
       addProduct, updateProduct, deleteProduct, quickAddStock,
@@ -418,8 +516,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       getStockValue, getLast14Days, getTopProducts, getLowStockProducts,
     ]
   );
-
-  if (!loaded) return null;
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
