@@ -8,15 +8,30 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
+import { ActivityIndicator, Image, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { Colors } from "@/constants/colors";
 import { AppProvider, useApp } from "@/context/AppContext";
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
+
+function LoadingScreen() {
+  return (
+    <View style={styles.loadingContainer}>
+      <Image
+        source={require("@/assets/images/logo.png")}
+        style={styles.loadingLogo}
+        resizeMode="contain"
+      />
+      <ActivityIndicator color={Colors.primary} size="large" style={{ marginTop: 24 }} />
+    </View>
+  );
+}
 
 function RootNavigator() {
   const { authUser, isAuthLoaded, profile } = useApp();
@@ -28,27 +43,25 @@ function RootNavigator() {
     const current = segments[0] as string | undefined;
 
     if (!authUser) {
-      // Not logged in → go to auth unless already there
-      if (current !== "auth") {
-        router.replace("/auth");
-      }
+      if (current !== "auth") router.replace("/auth");
       return;
     }
 
-    // Logged in but hasn't completed onboarding
     const needsOnboarding = !profile || !profile.hasSeenWelcome;
     if (needsOnboarding) {
-      if (current !== "welcome") {
-        router.replace("/welcome");
-      }
+      if (current !== "welcome") router.replace("/welcome");
       return;
     }
 
-    // Fully set up — go to main tabs
-    if (current === "auth" || current === "welcome") {
+    if (current === "auth" || current === "welcome" || current === undefined) {
       router.replace("/(tabs)");
     }
   }, [authUser, isAuthLoaded, profile, segments]);
+
+  // Show branded loading screen while session is being read from storage
+  if (!isAuthLoaded) {
+    return <LoadingScreen />;
+  }
 
   return (
     <Stack screenOptions={{ headerShown: false, animation: "fade" }}>
@@ -113,3 +126,16 @@ export default function RootLayout() {
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: Colors.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingLogo: {
+    width: 120,
+    height: 120,
+  },
+});
