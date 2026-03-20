@@ -25,23 +25,13 @@ jobs:
         run: pnpm install
 
       - name: Navigate to mobile app
-        run: |
-          cd artifacts/mobile
-          pnpm install
+        run: cd artifacts/mobile && pnpm install
 
       - name: Install EAS CLI
         run: npm install -g eas-cli
 
-      - name: Log in to Expo
-        run: |
-          npx expo login --username elijahdanso4032@gmail.com --password ${{ secrets.EXPO_PASSWORD }}
-        env:
-          EXPO_PASSWORD: ${{ secrets.EXPO_PASSWORD }}
-
       - name: Build APK
-        run: |
-          cd artifacts/mobile
-          npx eas build --platform android --profile preview --non-interactive
+        run: cd artifacts/mobile && npx eas build --platform android --profile preview --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
