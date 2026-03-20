@@ -20,24 +20,28 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
 
-      - name: Install root dependencies
+      - name: Install dependencies
         run: pnpm install
 
       - name: Navigate to mobile app
-        run: cd artifacts/mobile && pwd && ls -la
+        run: |
+          cd artifacts/mobile
+          pnpm install
 
-      - name: Install EAS CLI locally
-        run: cd artifacts/mobile && pnpm add -D eas-cli
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
 
-      - name: Initialize EAS project
-        run: cd artifacts/mobile && npx eas init --non-interactive
+      - name: Log in to Expo
+        run: |
+          npx expo login --username elijahdanso4032@gmail.com --password ${{ secrets.EXPO_PASSWORD }}
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_PASSWORD: ${{ secrets.EXPO_PASSWORD }}
 
-      - name: Build APK with EAS
-        run: cd artifacts/mobile && npx eas build --platform android --profile preview --non-interactive
+      - name: Build APK
+        run: |
+          cd artifacts/mobile
+          npx eas build --platform android --profile preview --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
