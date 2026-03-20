@@ -31,6 +31,11 @@ jobs:
       - name: Install EAS CLI locally
         run: cd artifacts/mobile && pnpm add -D eas-cli
 
+      - name: Initialize EAS project
+        run: cd artifacts/mobile && npx eas init --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
       - name: Build APK with EAS
         run: cd artifacts/mobile && npx eas build --platform android --profile preview --non-interactive
         env:
